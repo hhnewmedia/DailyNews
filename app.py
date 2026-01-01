@@ -5,15 +5,13 @@ from datetime import datetime
 import feedparser
 import io
 import urllib.parse
-from bs4 import BeautifulSoup
 
-# --- 1. 介面與參數設定 (RSS 免費版) ---
-# 這裡設定了各國對應的 Google News 參數，確保搜到當地新聞
+# --- 1. 介面與參數設定 (RSS Debug版) ---
 translations = {
     "繁體中文 (TW)": {
-        "title": "鴻海全球輿情監控系統 (RSS版)",
+        "title": "鴻海全球輿情監控系統 (除錯版)",
         "sidebar_title": "設定面板",
-        "gemini_label": "輸入 Google Gemini API Key (AI 摘要用)",
+        "gemini_label": "輸入 Google Gemini API Key",
         "days_label": "搜尋時間範圍",
         "keywords_label": "輸入搜尋關鍵字 (用逗號隔開)",
         "keywords_hint": "例如: 鴻海, Fii, 電動車",
@@ -23,10 +21,10 @@ translations = {
         "download_btn": "下載 Excel 報表",
         "error_api": "請輸入 Gemini API Key 才能使用 AI 摘要！",
         "error_no_key": "請輸入至少一個關鍵字！",
-        "params": {"hl": "zh-TW", "gl": "TW", "ceid": "TW:zh-Hant"} # 台灣參數
+        "params": {"hl": "zh-TW", "gl": "TW", "ceid": "TW:zh-Hant"}
     },
     "English (US)": {
-        "title": "Foxconn Media Monitor (RSS Ed.)",
+        "title": "Foxconn Media Monitor (Debug)",
         "sidebar_title": "Settings",
         "gemini_label": "Enter Gemini API Key",
         "days_label": "Search Time Range",
@@ -38,14 +36,14 @@ translations = {
         "download_btn": "Download Excel",
         "error_api": "Please enter Gemini API Key!",
         "error_no_key": "Please enter keywords!",
-        "params": {"hl": "en-US", "gl": "US", "ceid": "US:en"} # 美國參數
+        "params": {"hl": "en-US", "gl": "US", "ceid": "US:en"}
     },
     "Tiếng Việt (VN)": {
-        "title": "Hệ thống Giám sát Foxconn (RSS)",
+        "title": "Hệ thống Giám sát Foxconn (Debug)",
         "sidebar_title": "Cài đặt",
         "gemini_label": "Nhập Gemini API Key",
         "days_label": "Phạm vi thời gian",
-        "keywords_label": "Nhập từ khóa (phân cách dấu phẩy)",
+        "keywords_label": "Nhập từ khóa",
         "keywords_hint": "Ví dụ: Foxconn, Fii",
         "btn_start": "Bắt đầu tìm kiếm",
         "processing": "Đang tải tin tức...",
@@ -53,10 +51,10 @@ translations = {
         "download_btn": "Tải xuống báo cáo",
         "error_api": "Vui lòng nhập API Key!",
         "error_no_key": "Vui lòng nhập từ khóa!",
-        "params": {"hl": "vi", "gl": "VN", "ceid": "VN:vi"} # 越南參數
+        "params": {"hl": "vi", "gl": "VN", "ceid": "VN:vi"}
     },
     "Español (MX)": {
-        "title": "Monitor Foxconn (RSS)",
+        "title": "Monitor Foxconn (Debug)",
         "sidebar_title": "Configuración",
         "gemini_label": "Clave API Gemini",
         "days_label": "Rango de tiempo",
@@ -68,10 +66,10 @@ translations = {
         "download_btn": "Descargar Excel",
         "error_api": "¡Ingrese clave API!",
         "error_no_key": "¡Ingrese palabras clave!",
-        "params": {"hl": "es-419", "gl": "MX", "ceid": "MX:es-419"} # 墨西哥參數
+        "params": {"hl": "es-419", "gl": "MX", "ceid": "MX:es-419"}
     },
     "Português (BR)": {
-        "title": "Monitor Foxconn (RSS)",
+        "title": "Monitor Foxconn (Debug)",
         "sidebar_title": "Configurações",
         "gemini_label": "Chave API Gemini",
         "days_label": "Intervalo de tempo",
@@ -83,69 +81,51 @@ translations = {
         "download_btn": "Baixar Excel",
         "error_api": "Insira a chave API!",
         "error_no_key": "Insira palavras-chave!",
-        "params": {"hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"} # 巴西參數
+        "params": {"hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"}
     }
 }
 
-st.set_page_config(page_title="Foxconn RSS Monitor", layout="wide")
+st.set_page_config(page_title="Foxconn RSS Debug", layout="wide")
 
 # Sidebar
 language_option = st.sidebar.selectbox("Language / 語言", list(translations.keys()))
 t = translations[language_option]
 
-st.title(f"📡 {t['title']}")
+st.title(f"🛠️ {t['title']}")
 
 st.sidebar.title(t['sidebar_title'])
-gemini_key = st.sidebar.text_input(t['gemini_label'], type="password")
+gemini_key_input = st.sidebar.text_input(t['gemini_label'], type="password")
+# 自動去除前後空白，防止複製錯誤
+gemini_key = gemini_key_input.strip() if gemini_key_input else ""
 
-# 時間範圍：RSS 使用 when:7d 這種語法
 time_map = {"24 Hours / 1天": "when:1d", "Past Week / 7天": "when:7d"}
 time_selection = st.sidebar.selectbox(t['days_label'], list(time_map.keys()))
 time_param = time_map[time_selection]
 
-# Main Input
 user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
 
-# --- 4. 核心函數: Google RSS Feed ---
+# --- 核心函數 ---
 def search_google_rss(keyword, time_limit, params):
-    """
-    使用 Google News RSS Feed 獲取資料
-    這是一個公開的資料流，不需要 API Key，且比爬蟲穩定
-    """
-    # 組合搜尋網址
-    # 格式: https://news.google.com/rss/search?q={關鍵字}+{時間}&hl={語言}&gl={地區}&ceid={地區:語言}
     base_url = "https://news.google.com/rss/search"
-    
-    # URL Encode 關鍵字
     query = f"{keyword} {time_limit}"
     encoded_query = urllib.parse.quote(query)
-    
     rss_url = f"{base_url}?q={encoded_query}&hl={params['hl']}&gl={params['gl']}&ceid={params['ceid']}"
     
-    # 解析 RSS
     feed = feedparser.parse(rss_url)
-    
     results = []
-    # 取前 5 篇
     for entry in feed.entries[:5]:
-        # 清理標題 (有時候標題會包含來源，如 'Foxconn news - Reuters')
-        clean_title = entry.title
-        
-        # 嘗試解析發布時間
         pub_date = entry.published if 'published' in entry else datetime.now().strftime("%Y-%m-%d")
-        
         results.append({
             "Keyword": keyword,
-            "Title": clean_title,
+            "Title": entry.title,
             "Link": entry.link,
             "Date": pub_date,
             "Source": entry.source.title if 'source' in entry else "Google News"
         })
-        
     return results
 
 def ai_summarize(news_data, api_key, lang_selection):
-    """Gemini AI 摘要"""
+    # 使用最新的 Flash 模型
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-1.5-flash')
     target_lang = lang_selection.split("(")[0].strip()
@@ -158,7 +138,6 @@ def ai_summarize(news_data, api_key, lang_selection):
     
     for index, item in enumerate(news_data):
         try:
-            # RSS 有時候沒有內文預覽，我們用標題請 AI 擴寫或嘗試總結
             prompt = f"""
             Task: Provide a brief summary for a corporate report based on this news headline.
             Target Language: {target_lang}
@@ -166,12 +145,22 @@ def ai_summarize(news_data, api_key, lang_selection):
             
             News Title: {item['Title']}
             News Link: {item['Link']}
-            (Note: Since I cannot browse the link, summarize based on the title's implication for Foxconn/Business.)
             """
             response = model.generate_content(prompt)
             summary = response.text
-        except:
-            summary = "AI processing failed."
+        except Exception as e:
+            # 這裡會把真正的錯誤原因抓出來
+            error_msg = str(e)
+            if "400" in error_msg:
+                summary = "Error: Key 無效或請求錯誤 (400)"
+            elif "403" in error_msg:
+                summary = "Error: 權限不足 (403) - 請檢查 Key 是否啟用"
+            elif "429" in error_msg:
+                summary = "Error: 額度已滿 (429)"
+            elif "not found" in error_msg:
+                summary = "Error: 模型版本不符 (Model Not Found)"
+            else:
+                summary = f"Error: {error_msg}"
             
         item['AI Summary'] = summary
         summarized_data.append(item)
@@ -179,7 +168,7 @@ def ai_summarize(news_data, api_key, lang_selection):
         
     return summarized_data
 
-# --- 5. 執行邏輯 ---
+# --- 執行邏輯 ---
 if st.button(t['btn_start'], type="primary"):
     if not gemini_key:
         st.error(t['error_api'])
@@ -191,7 +180,6 @@ if st.button(t['btn_start'], type="primary"):
         raw_news_list = []
         keywords_list = user_keywords.split(",")
         
-        # 1. 執行 RSS 搜尋
         for kw in keywords_list:
             kw = kw.strip()
             if kw:
@@ -199,17 +187,13 @@ if st.button(t['btn_start'], type="primary"):
                 raw_news_list.extend(results)
         
         if not raw_news_list:
-            st.warning("No news found. / 找不到相關新聞 (RSS)")
+            st.warning("No news found. / 找不到相關新聞")
         else:
-            # 2. AI 摘要
             final_data = ai_summarize(raw_news_list, gemini_key, language_option)
-            
-            # 3. 顯示與下載
             df = pd.DataFrame(final_data)
             
-            # 調整欄位順序
+            # 確保欄位順序
             cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
-            # 確保欄位存在 (防止 AI 出錯時缺欄位)
             df = df.reindex(columns=cols)
             
             st.dataframe(df, use_container_width=True)
@@ -221,6 +205,6 @@ if st.button(t['btn_start'], type="primary"):
             st.download_button(
                 label=t['download_btn'],
                 data=buffer,
-                file_name=f"Foxconn_News_RSS_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                file_name=f"Foxconn_News_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.ms-excel"
             )
