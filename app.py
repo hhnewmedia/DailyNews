@@ -5,14 +5,15 @@ from datetime import datetime
 import feedparser
 import io
 import urllib.parse
+import time
 
-# --- 1. 介面與參數設定 (RSS Debug版) ---
+# --- 1. 介面與參數設定 (RSS 最終修復版) ---
 translations = {
     "繁體中文 (TW)": {
-        "title": "鴻海全球輿情監控系統 (除錯版)",
+        "title": "鴻海全球輿情監控系統",
         "sidebar_title": "設定面板",
         "gemini_label": "輸入 Google Gemini API Key",
-        "days_label": "搜尋時間範圍",
+        "days_label": "搜尋時間範圍 (天數)",
         "keywords_label": "輸入搜尋關鍵字 (用逗號隔開)",
         "keywords_hint": "例如: 鴻海, Fii, 電動車",
         "btn_start": "開始搜尋與分析",
@@ -24,10 +25,10 @@ translations = {
         "params": {"hl": "zh-TW", "gl": "TW", "ceid": "TW:zh-Hant"}
     },
     "English (US)": {
-        "title": "Foxconn Media Monitor (Debug)",
+        "title": "Foxconn Media Monitor",
         "sidebar_title": "Settings",
         "gemini_label": "Enter Gemini API Key",
-        "days_label": "Search Time Range",
+        "days_label": "Search Range (Days)",
         "keywords_label": "Enter Keywords (separated by comma)",
         "keywords_hint": "e.g., Foxconn, Fii, EV",
         "btn_start": "Start Search",
@@ -39,10 +40,10 @@ translations = {
         "params": {"hl": "en-US", "gl": "US", "ceid": "US:en"}
     },
     "Tiếng Việt (VN)": {
-        "title": "Hệ thống Giám sát Foxconn (Debug)",
+        "title": "Hệ thống Giám sát Foxconn",
         "sidebar_title": "Cài đặt",
         "gemini_label": "Nhập Gemini API Key",
-        "days_label": "Phạm vi thời gian",
+        "days_label": "Phạm vi thời gian (Ngày)",
         "keywords_label": "Nhập từ khóa",
         "keywords_hint": "Ví dụ: Foxconn, Fii",
         "btn_start": "Bắt đầu tìm kiếm",
@@ -54,10 +55,10 @@ translations = {
         "params": {"hl": "vi", "gl": "VN", "ceid": "VN:vi"}
     },
     "Español (MX)": {
-        "title": "Monitor Foxconn (Debug)",
+        "title": "Monitor Foxconn",
         "sidebar_title": "Configuración",
         "gemini_label": "Clave API Gemini",
-        "days_label": "Rango de tiempo",
+        "days_label": "Rango de tiempo (Días)",
         "keywords_label": "Palabras clave",
         "keywords_hint": "Ej: Foxconn, Fii",
         "btn_start": "Iniciar búsqueda",
@@ -69,11 +70,11 @@ translations = {
         "params": {"hl": "es-419", "gl": "MX", "ceid": "MX:es-419"}
     },
     "Português (BR)": {
-        "title": "Monitor Foxconn (Debug)",
+        "title": "Monitor Foxconn",
         "sidebar_title": "Configurações",
         "gemini_label": "Chave API Gemini",
-        "days_label": "Intervalo de tempo",
-        "keywords_label": "Palavras-chave",
+        "days_label": "Intervalo de tempo (Dias)",
+        "keywords_label": "Palabras-chave",
         "keywords_hint": "Ex: Foxconn, Fii",
         "btn_start": "Iniciar pesquisa",
         "processing": "Carregando notícias...",
@@ -85,22 +86,28 @@ translations = {
     }
 }
 
-st.set_page_config(page_title="Foxconn RSS Debug", layout="wide")
+st.set_page_config(page_title="Foxconn RSS Monitor", layout="wide")
 
 # Sidebar
 language_option = st.sidebar.selectbox("Language / 語言", list(translations.keys()))
 t = translations[language_option]
 
-st.title(f"🛠️ {t['title']}")
+st.title(f"📰 {t['title']}")
 
 st.sidebar.title(t['sidebar_title'])
 gemini_key_input = st.sidebar.text_input(t['gemini_label'], type="password")
-# 自動去除前後空白，防止複製錯誤
 gemini_key = gemini_key_input.strip() if gemini_key_input else ""
 
-time_map = {"24 Hours / 1天": "when:1d", "Past Week / 7天": "when:7d"}
-time_selection = st.sidebar.selectbox(t['days_label'], list(time_map.keys()))
-time_param = time_map[time_selection]
+# --- 更新功能：天數選擇 (1~7天) ---
+# 使用 slider 讓使用者選擇 1 到 7，預設為 1
+days_selected = st.sidebar.slider(
+    t['days_label'],
+    min_value=1,
+    max_value=7,
+    value=1
+)
+# 轉換成 Google RSS 需要的格式 (例如 when:1d)
+time_param = f"when:{days_selected}d"
 
 user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
 
@@ -113,7 +120,8 @@ def search_google_rss(keyword, time_limit, params):
     
     feed = feedparser.parse(rss_url)
     results = []
-    for entry in feed.entries[:5]:
+    # 稍微增加數量，取前 10 篇以免漏掉
+    for entry in feed.entries[:10]:
         pub_date = entry.published if 'published' in entry else datetime.now().strftime("%Y-%m-%d")
         results.append({
             "Keyword": keyword,
@@ -124,10 +132,13 @@ def search_google_rss(keyword, time_limit, params):
         })
     return results
 
+def get_ai_response(model_name, prompt):
+    """嘗試使用指定的模型獲取回應"""
+    model = genai.GenerativeModel(model_name)
+    return model.generate_content(prompt)
+
 def ai_summarize(news_data, api_key, lang_selection):
-    # 使用最新的 Flash 模型
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
     target_lang = lang_selection.split("(")[0].strip()
     
     summarized_data = []
@@ -137,30 +148,31 @@ def ai_summarize(news_data, api_key, lang_selection):
     progress_bar = st.progress(0)
     
     for index, item in enumerate(news_data):
+        prompt = f"""
+        Task: You are a PR assistant for Foxconn. Summarize this news headline in 1 sentence.
+        Target Language: {target_lang}
+        
+        News Title: {item['Title']}
+        News Link: {item['Link']}
+        """
+        
+        summary = ""
         try:
-            prompt = f"""
-            Task: Provide a brief summary for a corporate report based on this news headline.
-            Target Language: {target_lang}
-            Limit: 1-2 sentences.
-            
-            News Title: {item['Title']}
-            News Link: {item['Link']}
-            """
-            response = model.generate_content(prompt)
+            # 優先嘗試快速版模型 (Flash)
+            response = get_ai_response('gemini-1.5-flash', prompt)
             summary = response.text
         except Exception as e:
-            # 這裡會把真正的錯誤原因抓出來
-            error_msg = str(e)
-            if "400" in error_msg:
-                summary = "Error: Key 無效或請求錯誤 (400)"
-            elif "403" in error_msg:
-                summary = "Error: 權限不足 (403) - 請檢查 Key 是否啟用"
-            elif "429" in error_msg:
-                summary = "Error: 額度已滿 (429)"
-            elif "not found" in error_msg:
-                summary = "Error: 模型版本不符 (Model Not Found)"
-            else:
-                summary = f"Error: {error_msg}"
+            # 如果失敗 (例如 Model Not Found)，自動切換回穩定版 (Pro)
+            try:
+                response = get_ai_response('gemini-pro', prompt)
+                summary = response.text
+            except Exception as e2:
+                # 真的不行才報錯
+                error_msg = str(e2)
+                if "429" in error_msg:
+                    summary = "Error: 額度已滿 (請稍後再試)"
+                else:
+                    summary = f"AI Error: {error_msg}"
             
         item['AI Summary'] = summary
         summarized_data.append(item)
@@ -187,12 +199,12 @@ if st.button(t['btn_start'], type="primary"):
                 raw_news_list.extend(results)
         
         if not raw_news_list:
-            st.warning("No news found. / 找不到相關新聞")
+            st.warning(f"No news found in the past {days_selected} days.")
         else:
             final_data = ai_summarize(raw_news_list, gemini_key, language_option)
             df = pd.DataFrame(final_data)
             
-            # 確保欄位順序
+            # 欄位排序
             cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
             df = df.reindex(columns=cols)
             
