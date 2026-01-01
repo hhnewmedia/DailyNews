@@ -8,7 +8,7 @@ import requests
 import json
 import time
 
-# --- 1. 多國語言與參數設定 ---
+# --- 1. 設定與翻譯 ---
 translations = {
     "繁體中文 (TW)": {
         "title": "鴻海全球輿情監控系統",
@@ -18,11 +18,7 @@ translations = {
         "keywords_label": "輸入搜尋關鍵字 (用逗號隔開)",
         "keywords_hint": "例如: 鴻海, Fii, 電動車",
         "btn_start": "開始搜尋與分析",
-        "processing": "正在讀取 Google News RSS 並嘗試連接 AI 模型...",
-        "success": "分析完成！",
         "download_btn": "下載 Excel 報表",
-        "error_api": "請輸入 Gemini API Key 才能使用 AI 摘要！",
-        "error_no_key": "請輸入至少一個關鍵字！",
         "params": {"hl": "zh-TW", "gl": "TW", "ceid": "TW:zh-Hant"},
         "prompt_lang": "Traditional Chinese"
     },
@@ -31,14 +27,10 @@ translations = {
         "sidebar_title": "Settings",
         "gemini_label": "Enter Gemini API Key",
         "days_label": "Search Range (Days)",
-        "keywords_label": "Enter Keywords (separated by comma)",
+        "keywords_label": "Enter Keywords",
         "keywords_hint": "e.g., Foxconn, Fii, EV",
         "btn_start": "Start Search",
-        "processing": "Fetching Google News RSS...",
-        "success": "Analysis Complete!",
         "download_btn": "Download Excel",
-        "error_api": "Please enter Gemini API Key!",
-        "error_no_key": "Please enter keywords!",
         "params": {"hl": "en-US", "gl": "US", "ceid": "US:en"},
         "prompt_lang": "English"
     },
@@ -46,15 +38,11 @@ translations = {
         "title": "Hệ thống Giám sát Foxconn",
         "sidebar_title": "Cài đặt",
         "gemini_label": "Nhập Gemini API Key",
-        "days_label": "Phạm vi thời gian (Ngày)",
+        "days_label": "Phạm vi thời gian",
         "keywords_label": "Nhập từ khóa",
         "keywords_hint": "Ví dụ: Foxconn, Fii",
         "btn_start": "Bắt đầu tìm kiếm",
-        "processing": "Đang tải tin tức...",
-        "success": "Hoàn tất!",
         "download_btn": "Tải xuống báo cáo",
-        "error_api": "Vui lòng nhập API Key!",
-        "error_no_key": "Vui lòng nhập từ khóa!",
         "params": {"hl": "vi", "gl": "VN", "ceid": "VN:vi"},
         "prompt_lang": "Vietnamese"
     },
@@ -62,15 +50,11 @@ translations = {
         "title": "Monitor Foxconn",
         "sidebar_title": "Configuración",
         "gemini_label": "Clave API Gemini",
-        "days_label": "Rango de tiempo (Días)",
+        "days_label": "Rango de tiempo",
         "keywords_label": "Palabras clave",
         "keywords_hint": "Ej: Foxconn, Fii",
         "btn_start": "Iniciar búsqueda",
-        "processing": "Cargando noticias...",
-        "success": "¡Completo!",
         "download_btn": "Descargar Excel",
-        "error_api": "¡Ingrese clave API!",
-        "error_no_key": "¡Ingrese palabras clave!",
         "params": {"hl": "es-419", "gl": "MX", "ceid": "MX:es-419"},
         "prompt_lang": "Spanish"
     },
@@ -78,23 +62,19 @@ translations = {
         "title": "Monitor Foxconn",
         "sidebar_title": "Configurações",
         "gemini_label": "Chave API Gemini",
-        "days_label": "Intervalo de tempo (Dias)",
+        "days_label": "Intervalo de tempo",
         "keywords_label": "Palabras-chave",
         "keywords_hint": "Ex: Foxconn, Fii",
         "btn_start": "Iniciar pesquisa",
-        "processing": "Carregando notícias...",
-        "success": "Concluído!",
         "download_btn": "Baixar Excel",
-        "error_api": "Insira a chave API!",
-        "error_no_key": "Insira palavras-chave!",
         "params": {"hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"},
         "prompt_lang": "Portuguese"
     }
 }
 
-st.set_page_config(page_title="Foxconn Global Monitor", layout="wide")
+st.set_page_config(page_title="Foxconn Monitor", layout="wide")
 
-# Sidebar - 語言選擇
+# Sidebar
 language_option = st.sidebar.selectbox("Language / 語言", list(translations.keys()))
 t = translations[language_option]
 
@@ -104,16 +84,137 @@ st.sidebar.title(t['sidebar_title'])
 gemini_key_input = st.sidebar.text_input(t['gemini_label'], type="password")
 gemini_key = gemini_key_input.strip() if gemini_key_input else ""
 
-# 天數滑桿
 days_selected = st.sidebar.slider(t['days_label'], 1, 7, 1)
 time_param = f"when:{days_selected}d"
 
-user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
+# 系統自我檢測燈號 (如果有看到這個，代表程式碼有複製完整)
+st.sidebar.markdown("---")
+st.sidebar.success("✅ System Ready (v3.0)")
 
-# --- 2. 核心函數: Google News RSS 搜尋 ---
+# --- 2. 核心函數: 搜尋 ---
 def search_google_rss(keyword, time_limit, params):
     base_url = "https://news.google.com/rss/search"
     query = f"{keyword} {time_limit}"
     encoded_query = urllib.parse.quote(query)
+    rss_url = f"{base_url}?q={encoded_query}&hl={params['hl']}&gl={params['gl']}&ceid={params['ceid']}"
     
-    # 使用選擇的語言參數 (hl, gl, ceid)
+    feed = feedparser.parse(rss_url)
+    results = []
+    for entry in feed.entries[:10]:
+        pub_date = entry.published if 'published' in entry else datetime.now().strftime("%Y-%m-%d")
+        results.append({
+            "Keyword": keyword,
+            "Title": entry.title,
+            "Link": entry.link,
+            "Date": pub_date,
+            "Source": entry.source.title if 'source' in entry else "Google News"
+        })
+    return results
+
+# --- 3. 核心函數: AI (萬能鑰匙邏輯) ---
+def call_gemini_api(api_key, text):
+    """
+    自動輪詢 5 種不同的模型名稱，直到找到一個能用的為止。
+    解決 404 Model Not Found 問題。
+    """
+    # 這是 Google 目前所有可能的模型名稱列表
+    candidates = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash-001",
+        "gemini-pro",
+        "gemini-1.0-pro"
+    ]
+    
+    headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": text}]}]}
+    
+    last_error = ""
+    
+    for model in candidates:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        try:
+            # 設定 5 秒超時，快速切換
+            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=5)
+            
+            if response.status_code == 200:
+                return response.json()['candidates'][0]['content']['parts'][0]['text']
+            else:
+                last_error = f"{response.status_code}"
+                continue 
+        except Exception as e:
+            last_error = str(e)
+            continue
+            
+    return f"AI 暫時無法連線 (Error: {last_error}) - 請檢查 Key 是否正確"
+
+def ai_summarize(news_data, api_key, target_lang):
+    summarized_data = []
+    total = len(news_data)
+    if total == 0: return []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for index, item in enumerate(news_data):
+        status_text.text(f"AI Processing: {index+1}/{total}...")
+        
+        prompt = f"""
+        Role: Corporate PR. Summarize in 1 sentence ({target_lang}).
+        News: {item['Title']}
+        """
+        
+        summary = call_gemini_api(api_key, prompt)
+        item['AI Summary'] = summary
+        summarized_data.append(item)
+        progress_bar.progress((index + 1) / total)
+    
+    status_text.empty()
+    return summarized_data
+
+# --- 4. 主執行區塊 (按鈕在這裡！) ---
+user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
+
+st.markdown("---") # 分隔線
+
+# 確保按鈕一定會顯示
+if st.button(t['btn_start'], type="primary"):
+    if not gemini_key:
+        st.error("❌ 請輸入 API Key")
+    elif not user_keywords:
+        st.error("❌ 請輸入關鍵字")
+    else:
+        st.info("🔍 正在搜尋中...")
+        
+        raw_news_list = []
+        keywords_list = user_keywords.split(",")
+        
+        for kw in keywords_list:
+            kw = kw.strip()
+            if kw:
+                results = search_google_rss(kw, time_param, t['params'])
+                raw_news_list.extend(results)
+        
+        if not raw_news_list:
+            st.warning("⚠️ 找不到相關新聞")
+        else:
+            final_data = ai_summarize(raw_news_list, gemini_key, t['prompt_lang'])
+            df = pd.DataFrame(final_data)
+            
+            # 欄位排序
+            cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
+            df = df.reindex(columns=cols)
+            
+            st.dataframe(df, use_container_width=True)
+            
+            # Excel 下載
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False)
+                
+            st.download_button(
+                label=t['download_btn'],
+                data=buffer,
+                file_name=f"Foxconn_News_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.ms-excel"
+            )
