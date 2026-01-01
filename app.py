@@ -64,4 +64,153 @@ translations = {
     },
     "Português (BR)": {
         "title": "Monitor Foxconn",
-        "sidebar_title": "Configurações
+        "sidebar_title": "Configurações",
+        "gemini_label": "Chave API Gemini",
+        "model_label": "Selecionar modelo AI",
+        "days_label": "Intervalo de tempo",
+        "keywords_label": "Palabras-chave",
+        "keywords_hint": "Ex: Foxconn, Fii",
+        "btn_start": "Iniciar pesquisa",
+        "download_btn": "Baixar Excel",
+        "params": {"hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"},
+        "prompt_lang": "Portuguese"
+    }
+}
+
+st.set_page_config(page_title="Foxconn Monitor", layout="wide")
+
+# Sidebar
+language_option = st.sidebar.selectbox("Language / 語言", list(translations.keys()))
+t = translations[language_option]
+
+st.title(f"🦊 {t['title']}")
+
+st.sidebar.title(t['sidebar_title'])
+gemini_key_input = st.sidebar.text_input(t['gemini_label'], type="password")
+gemini_key = gemini_key_input.strip() if gemini_key_input else ""
+
+# 【新增功能】模型選擇器
+# 這裡列出三種最常用的模型，讓您手動切換
+model_options = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"]
+selected_model = st.sidebar.selectbox(t['model_label'], model_options)
+
+days_selected = st.sidebar.slider(t['days_label'], 1, 7, 1)
+time_param = f"when:{days_selected}d"
+
+st.sidebar.markdown("---")
+st.sidebar.success("✅ System Ready (v4.0)")
+
+# --- 2. 核心函數: 搜尋 ---
+def search_google_rss(keyword, time_limit, params):
+    base_url = "https://news.google.com/rss/search"
+    query = f"{keyword} {time_limit}"
+    encoded_query = urllib.parse.quote(query)
+    rss_url = f"{base_url}?q={encoded_query}&hl={params['hl']}&gl={params['gl']}&ceid={params['ceid']}"
+    
+    feed = feedparser.parse(rss_url)
+    results = []
+    for entry in feed.entries[:10]:
+        pub_date = entry.published if 'published' in entry else datetime.now().strftime("%Y-%m-%d")
+        results.append({
+            "Keyword": keyword,
+            "Title": entry.title,
+            "Link": entry.link,
+            "Date": pub_date,
+            "Source": entry.source.title if 'source' in entry else "Google News"
+        })
+    return results
+
+# --- 3. 核心函數: AI (v4.0 手動切換版) ---
+def call_gemini_api(api_key, text, model_name):
+    """
+    使用 v1beta 通道 (支援更多模型)，並允許使用者指定模型
+    """
+    # 這裡改回 v1beta，因為 Flash 模型在 v1beta 比較常見
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    
+    headers = {'Content-Type': 'application/json'}
+    payload = {"contents": [{"parts": [{"text": text}]}]}
+    
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            try:
+                error_info = response.json()
+                error_msg = error_info.get('error', {}).get('message', 'Unknown Error')
+                return f"⚠️ 失敗: {error_msg} (Code: {response.status_code})"
+            except:
+                return f"⚠️ 連線失敗 (Code: {response.status_code})"
+                
+    except Exception as e:
+        return f"⚠️ 程式錯誤: {str(e)}"
+
+def ai_summarize(news_data, api_key, target_lang, model_name):
+    summarized_data = []
+    total = len(news_data)
+    if total == 0: return []
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for index, item in enumerate(news_data):
+        status_text.text(f"AI Analysing ({model_name}): {index+1}/{total}...")
+        
+        prompt = f"""
+        Role: Corporate PR. Summarize in 1 sentence ({target_lang}).
+        News: {item['Title']}
+        """
+        
+        summary = call_gemini_api(api_key, prompt, model_name)
+        item['AI Summary'] = summary
+        summarized_data.append(item)
+        progress_bar.progress((index + 1) / total)
+    
+    status_text.empty()
+    return summarized_data
+
+# --- 4. 主執行區塊 ---
+user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
+
+st.markdown("---")
+
+if st.button(t['btn_start'], type="primary"):
+    if not gemini_key:
+        st.error("❌ 請輸入 API Key")
+    elif not user_keywords:
+        st.error("❌ 請輸入關鍵字")
+    else:
+        st.info(f"🔍 正在搜尋中 (使用模型: {selected_model})...")
+        
+        raw_news_list = []
+        keywords_list = user_keywords.split(",")
+        
+        for kw in keywords_list:
+            kw = kw.strip()
+            if kw:
+                results = search_google_rss(kw, time_param, t['params'])
+                raw_news_list.extend(results)
+        
+        if not raw_news_list:
+            st.warning("⚠️ 找不到相關新聞")
+        else:
+            final_data = ai_summarize(raw_news_list, gemini_key, t['prompt_lang'], selected_model)
+            df = pd.DataFrame(final_data)
+            
+            cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
+            df = df.reindex(columns=cols)
+            
+            st.dataframe(df, use_container_width=True)
+            
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False)
+                
+            st.download_button(
+                label=t['download_btn'],
+                data=buffer,
+                file_name=f"Foxconn_News_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.ms-excel"
+            )
