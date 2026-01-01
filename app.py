@@ -147,7 +147,7 @@ def search_google_rss(keyword, time_limit, params):
 def ai_summarize(news_data, api_key, lang_selection):
     """Gemini AI 摘要"""
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     target_lang = lang_selection.split("(")[0].strip()
     
     summarized_data = []
