@@ -1,5 +1,6 @@
 streamlit
-duckduckgo-search>=5.0
 google-generativeai
 pandas
 xlsxwriter
+feedparser
+beautifulsoup4
