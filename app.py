@@ -87,9 +87,9 @@ gemini_key = gemini_key_input.strip() if gemini_key_input else ""
 days_selected = st.sidebar.slider(t['days_label'], 1, 7, 1)
 time_param = f"when:{days_selected}d"
 
-# 系統自我檢測燈號 (如果有看到這個，代表程式碼有複製完整)
+# 系統狀態顯示
 st.sidebar.markdown("---")
-st.sidebar.success("✅ System Ready (v3.0)")
+st.sidebar.success("✅ System Ready (v3.1 Stable)")
 
 # --- 2. 核心函數: 搜尋 ---
 def search_google_rss(keyword, time_limit, params):
@@ -111,42 +111,36 @@ def search_google_rss(keyword, time_limit, params):
         })
     return results
 
-# --- 3. 核心函數: AI (萬能鑰匙邏輯) ---
+# --- 3. 核心函數: AI (v3.1 正式通道版) ---
 def call_gemini_api(api_key, text):
     """
-    自動輪詢 5 種不同的模型名稱，直到找到一個能用的為止。
-    解決 404 Model Not Found 問題。
+    使用 v1 正式版 API，並具備詳細錯誤診斷功能
     """
-    # 這是 Google 目前所有可能的模型名稱列表
-    candidates = [
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash-001",
-        "gemini-pro",
-        "gemini-1.0-pro"
-    ]
+    # 優先使用最穩定的 Flash 模型
+    model = "gemini-1.5-flash"
+    
+    # 改用 v1 正式版網址 (比 v1beta 更穩定)
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
     
     headers = {'Content-Type': 'application/json'}
     payload = {"contents": [{"parts": [{"text": text}]}]}
     
-    last_error = ""
-    
-    for model in candidates:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        try:
-            # 設定 5 秒超時，快速切換
-            response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=5)
-            
-            if response.status_code == 200:
-                return response.json()['candidates'][0]['content']['parts'][0]['text']
-            else:
-                last_error = f"{response.status_code}"
-                continue 
-        except Exception as e:
-            last_error = str(e)
-            continue
-            
-    return f"AI 暫時無法連線 (Error: {last_error}) - 請檢查 Key 是否正確"
+    try:
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=10)
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            # 【關鍵修改】嘗試讀取 Google 回傳的詳細錯誤訊息
+            try:
+                error_info = response.json()
+                error_msg = error_info.get('error', {}).get('message', 'Unknown Error')
+                return f"⚠️ 失敗: {error_msg} (Code: {response.status_code})"
+            except:
+                return f"⚠️ 連線失敗 (Code: {response.status_code}) - 請檢查 API Key"
+                
+    except Exception as e:
+        return f"⚠️ 程式錯誤: {str(e)}"
 
 def ai_summarize(news_data, api_key, target_lang):
     summarized_data = []
@@ -157,7 +151,7 @@ def ai_summarize(news_data, api_key, target_lang):
     status_text = st.empty()
     
     for index, item in enumerate(news_data):
-        status_text.text(f"AI Processing: {index+1}/{total}...")
+        status_text.text(f"AI Analysing: {index+1}/{total}...")
         
         prompt = f"""
         Role: Corporate PR. Summarize in 1 sentence ({target_lang}).
@@ -172,12 +166,11 @@ def ai_summarize(news_data, api_key, target_lang):
     status_text.empty()
     return summarized_data
 
-# --- 4. 主執行區塊 (按鈕在這裡！) ---
+# --- 4. 主執行區塊 ---
 user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
 
-st.markdown("---") # 分隔線
+st.markdown("---")
 
-# 確保按鈕一定會顯示
 if st.button(t['btn_start'], type="primary"):
     if not gemini_key:
         st.error("❌ 請輸入 API Key")
@@ -207,7 +200,6 @@ if st.button(t['btn_start'], type="primary"):
             
             st.dataframe(df, use_container_width=True)
             
-            # Excel 下載
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df.to_excel(writer, index=False)
