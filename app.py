@@ -1,246 +1,226 @@
 import streamlit as st
-from duckduckgo_search import DDGS
 import google.generativeai as genai
 import pandas as pd
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
+import feedparser
+import io
+import urllib.parse
+from bs4 import BeautifulSoup
 
-# --- 1. 介面語言設定 (UI Translations) ---
+# --- 1. 介面與參數設定 (RSS 免費版) ---
+# 這裡設定了各國對應的 Google News 參數，確保搜到當地新聞
 translations = {
     "繁體中文 (TW)": {
-        "title": "鴻海全球輿情監控系統",
+        "title": "鴻海全球輿情監控系統 (RSS版)",
         "sidebar_title": "設定面板",
-        "lang_select": "選擇介面語言",
-        "api_label": "輸入 Google Gemini API Key",
+        "gemini_label": "輸入 Google Gemini API Key (AI 摘要用)",
         "days_label": "搜尋時間範圍",
         "keywords_label": "輸入搜尋關鍵字 (用逗號隔開)",
         "keywords_hint": "例如: 鴻海, Fii, 電動車",
         "btn_start": "開始搜尋與分析",
-        "processing": "正在搜尋新聞並進行 AI 摘要，這需要一點時間...",
+        "processing": "正在讀取 Google News RSS 並進行 AI 摘要...",
         "success": "分析完成！",
-        "col_title": "新聞標題",
-        "col_summary": "AI 重點摘要",
-        "col_link": "連結",
-        "col_date": "日期",
         "download_btn": "下載 Excel 報表",
-        "error_api": "請先輸入 API Key 才能使用 AI 功能！",
-        "error_no_key": "請輸入至少一個關鍵字！"
+        "error_api": "請輸入 Gemini API Key 才能使用 AI 摘要！",
+        "error_no_key": "請輸入至少一個關鍵字！",
+        "params": {"hl": "zh-TW", "gl": "TW", "ceid": "TW:zh-Hant"} # 台灣參數
     },
     "English (US)": {
-        "title": "Foxconn Global Media Monitor",
+        "title": "Foxconn Media Monitor (RSS Ed.)",
         "sidebar_title": "Settings",
-        "lang_select": "Interface Language",
-        "api_label": "Enter Google Gemini API Key",
+        "gemini_label": "Enter Gemini API Key",
         "days_label": "Search Time Range",
         "keywords_label": "Enter Keywords (separated by comma)",
         "keywords_hint": "e.g., Foxconn, Fii, EV",
-        "btn_start": "Start Search & Analysis",
-        "processing": "Searching and generating AI summaries...",
+        "btn_start": "Start Search",
+        "processing": "Fetching Google News RSS...",
         "success": "Analysis Complete!",
-        "col_title": "Title",
-        "col_summary": "AI Summary",
-        "col_link": "Link",
-        "col_date": "Date",
-        "download_btn": "Download Excel Report",
-        "error_api": "Please enter API Key first!",
-        "error_no_key": "Please enter at least one keyword!"
+        "download_btn": "Download Excel",
+        "error_api": "Please enter Gemini API Key!",
+        "error_no_key": "Please enter keywords!",
+        "params": {"hl": "en-US", "gl": "US", "ceid": "US:en"} # 美國參數
     },
     "Tiếng Việt (VN)": {
-        "title": "Hệ thống Giám sát Truyền thông Toàn cầu Foxconn",
+        "title": "Hệ thống Giám sát Foxconn (RSS)",
         "sidebar_title": "Cài đặt",
-        "lang_select": "Ngôn ngữ giao diện",
-        "api_label": "Nhập Google Gemini API Key",
-        "days_label": "Phạm vi thời gian tìm kiếm",
-        "keywords_label": "Nhập từ khóa (phân cách bằng dấu phẩy)",
-        "keywords_hint": "Ví dụ: Foxconn, Fii, Xe điện",
-        "btn_start": "Bắt đầu tìm kiếm & Phân tích",
-        "processing": "Đang tìm kiếm và tạo tóm tắt AI...",
-        "success": "Hoàn tất phân tích!",
-        "col_title": "Tiêu đề",
-        "col_summary": "Tóm tắt AI",
-        "col_link": "Liên kết",
-        "col_date": "Ngày",
-        "download_btn": "Tải xuống báo cáo Excel",
-        "error_api": "Vui lòng nhập API Key trước!",
-        "error_no_key": "Vui lòng nhập ít nhất một từ khóa!"
+        "gemini_label": "Nhập Gemini API Key",
+        "days_label": "Phạm vi thời gian",
+        "keywords_label": "Nhập từ khóa (phân cách dấu phẩy)",
+        "keywords_hint": "Ví dụ: Foxconn, Fii",
+        "btn_start": "Bắt đầu tìm kiếm",
+        "processing": "Đang tải tin tức...",
+        "success": "Hoàn tất!",
+        "download_btn": "Tải xuống báo cáo",
+        "error_api": "Vui lòng nhập API Key!",
+        "error_no_key": "Vui lòng nhập từ khóa!",
+        "params": {"hl": "vi", "gl": "VN", "ceid": "VN:vi"} # 越南參數
     },
     "Español (MX)": {
-        "title": "Monitor Global de Medios de Foxconn",
+        "title": "Monitor Foxconn (RSS)",
         "sidebar_title": "Configuración",
-        "lang_select": "Idioma de la interfaz",
-        "api_label": "Ingrese Google Gemini API Key",
-        "days_label": "Rango de tiempo de búsqueda",
-        "keywords_label": "Ingrese palabras clave (separadas por comas)",
-        "keywords_hint": "Ej: Foxconn, Fii, Vehículos eléctricos",
-        "btn_start": "Iniciar búsqueda y análisis",
-        "processing": "Buscando y generando resúmenes de IA...",
-        "success": "¡Análisis completo!",
-        "col_title": "Título",
-        "col_summary": "Resumen IA",
-        "col_link": "Enlace",
-        "col_date": "Fecha",
-        "download_btn": "Descargar informe Excel",
-        "error_api": "¡Ingrese la clave API primero!",
-        "error_no_key": "¡Ingrese al menos una palabra clave!"
+        "gemini_label": "Clave API Gemini",
+        "days_label": "Rango de tiempo",
+        "keywords_label": "Palabras clave",
+        "keywords_hint": "Ej: Foxconn, Fii",
+        "btn_start": "Iniciar búsqueda",
+        "processing": "Cargando noticias...",
+        "success": "¡Completo!",
+        "download_btn": "Descargar Excel",
+        "error_api": "¡Ingrese clave API!",
+        "error_no_key": "¡Ingrese palabras clave!",
+        "params": {"hl": "es-419", "gl": "MX", "ceid": "MX:es-419"} # 墨西哥參數
     },
-     "Português (BR)": {
-        "title": "Monitor Global de Mídia da Foxconn",
+    "Português (BR)": {
+        "title": "Monitor Foxconn (RSS)",
         "sidebar_title": "Configurações",
-        "lang_select": "Idioma da interface",
-        "api_label": "Insira Google Gemini API Key",
-        "days_label": "Intervalo de tempo de pesquisa",
-        "keywords_label": "Insira palavras-chave (separadas por vírgula)",
-        "keywords_hint": "Ex: Foxconn, Fii, Veículos elétricos",
-        "btn_start": "Iniciar pesquisa e análise",
-        "processing": "Pesquisando e gerando resumos de IA...",
-        "success": "Análise concluída!",
-        "col_title": "Título",
-        "col_summary": "Resumo IA",
-        "col_link": "Link",
-        "col_date": "Data",
-        "download_btn": "Baixar relatório Excel",
-        "error_api": "Por favor, insira a chave da API primeiro!",
-        "error_no_key": "Por favor, insira pelo menos uma palavra-chave!"
+        "gemini_label": "Chave API Gemini",
+        "days_label": "Intervalo de tempo",
+        "keywords_label": "Palavras-chave",
+        "keywords_hint": "Ex: Foxconn, Fii",
+        "btn_start": "Iniciar pesquisa",
+        "processing": "Carregando notícias...",
+        "success": "Concluído!",
+        "download_btn": "Baixar Excel",
+        "error_api": "Insira a chave API!",
+        "error_no_key": "Insira palavras-chave!",
+        "params": {"hl": "pt-BR", "gl": "BR", "ceid": "BR:pt-419"} # 巴西參數
     }
 }
 
-# --- 2. 應用程式設定 ---
-st.set_page_config(page_title="Foxconn Media Monitor", layout="wide")
+st.set_page_config(page_title="Foxconn RSS Monitor", layout="wide")
 
-# Sidebar - 語言選擇
-language_option = st.sidebar.selectbox(
-    "Language / 語言",
-    list(translations.keys())
-)
+# Sidebar
+language_option = st.sidebar.selectbox("Language / 語言", list(translations.keys()))
 t = translations[language_option]
 
-st.title(f"🦊 {t['title']}")
-st.markdown("---")
+st.title(f"📡 {t['title']}")
 
-# Sidebar - API Key 與 設定
 st.sidebar.title(t['sidebar_title'])
-api_key = st.sidebar.text_input(t['api_label'], type="password")
+gemini_key = st.sidebar.text_input(t['gemini_label'], type="password")
 
-# 時間範圍對應 DuckDuckGo 參數 (d=1天, w=1週)
-time_map = {
-    "24 Hours / 1天": "d",
-    "Past Week / 7天": "w"
-}
+# 時間範圍：RSS 使用 when:7d 這種語法
+time_map = {"24 Hours / 1天": "when:1d", "Past Week / 7天": "when:7d"}
 time_selection = st.sidebar.selectbox(t['days_label'], list(time_map.keys()))
-ddg_time_param = time_map[time_selection]
+time_param = time_map[time_selection]
 
-# --- 3. 主畫面輸入 ---
+# Main Input
 user_keywords = st.text_input(t['keywords_label'], placeholder=t['keywords_hint'])
 
-# --- 4. 核心功能函數 ---
-
-def search_news(keywords_list, time_limit):
-    """使用 DuckDuckGo 搜尋新聞"""
+# --- 4. 核心函數: Google RSS Feed ---
+def search_google_rss(keyword, time_limit, params):
+    """
+    使用 Google News RSS Feed 獲取資料
+    這是一個公開的資料流，不需要 API Key，且比爬蟲穩定
+    """
+    # 組合搜尋網址
+    # 格式: https://news.google.com/rss/search?q={關鍵字}+{時間}&hl={語言}&gl={地區}&ceid={地區:語言}
+    base_url = "https://news.google.com/rss/search"
+    
+    # URL Encode 關鍵字
+    query = f"{keyword} {time_limit}"
+    encoded_query = urllib.parse.quote(query)
+    
+    rss_url = f"{base_url}?q={encoded_query}&hl={params['hl']}&gl={params['gl']}&ceid={params['ceid']}"
+    
+    # 解析 RSS
+    feed = feedparser.parse(rss_url)
+    
     results = []
-    with DDGS() as ddgs:
-        for keyword in keywords_list:
-            keyword = keyword.strip()
-            if not keyword: continue
-            # 搜尋新聞，限制時間與數量
-            news_gen = ddgs.news(keyword, region="wt-wt", safesearch="off", timelimit=time_limit, max_results=5)
-            if news_gen:
-                for r in news_gen:
-                    results.append({
-                        "Keyword": keyword,
-                        "Title": r.get('title'),
-                        "Link": r.get('url'),
-                        "Date": r.get('date'),
-                        "Source": r.get('source'),
-                        "Snippet": r.get('body') # 這是搜尋引擎抓到的預覽文字
-                    })
-            time.sleep(0.5) # 稍微暫停避免太快
+    # 取前 5 篇
+    for entry in feed.entries[:5]:
+        # 清理標題 (有時候標題會包含來源，如 'Foxconn news - Reuters')
+        clean_title = entry.title
+        
+        # 嘗試解析發布時間
+        pub_date = entry.published if 'published' in entry else datetime.now().strftime("%Y-%m-%d")
+        
+        results.append({
+            "Keyword": keyword,
+            "Title": clean_title,
+            "Link": entry.link,
+            "Date": pub_date,
+            "Source": entry.source.title if 'source' in entry else "Google News"
+        })
+        
     return results
 
 def ai_summarize(news_data, api_key, lang_selection):
-    """使用 Gemini AI 進行摘要"""
+    """Gemini AI 摘要"""
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-pro')
+    target_lang = lang_selection.split("(")[0].strip()
     
-    # 決定 AI 回覆的語言
-    target_lang = lang_selection.split("(")[0].strip() # 抓取中文、English等字眼
-
     summarized_data = []
     total = len(news_data)
+    if total == 0: return []
     
     progress_bar = st.progress(0)
     
     for index, item in enumerate(news_data):
         try:
-            # 提示詞工程：要求 AI 扮演專業公關
+            # RSS 有時候沒有內文預覽，我們用標題請 AI 擴寫或嘗試總結
             prompt = f"""
-            Task: Summarize the following news snippet related to Foxconn/business for a corporate PR report.
+            Task: Provide a brief summary for a corporate report based on this news headline.
             Target Language: {target_lang}
-            Limit: Within 50 words.
+            Limit: 1-2 sentences.
             
             News Title: {item['Title']}
-            News Snippet: {item['Snippet']}
+            News Link: {item['Link']}
+            (Note: Since I cannot browse the link, summarize based on the title's implication for Foxconn/Business.)
             """
-            
             response = model.generate_content(prompt)
             summary = response.text
-        except Exception as e:
-            summary = "Error in AI generation or quota exceeded."
-        
+        except:
+            summary = "AI processing failed."
+            
         item['AI Summary'] = summary
         summarized_data.append(item)
-        
-        # 更新進度條
         progress_bar.progress((index + 1) / total)
         
     return summarized_data
 
-# --- 5. 按鈕與執行邏輯 ---
+# --- 5. 執行邏輯 ---
 if st.button(t['btn_start'], type="primary"):
-    if not api_key:
+    if not gemini_key:
         st.error(t['error_api'])
     elif not user_keywords:
         st.error(t['error_no_key'])
     else:
         st.info(t['processing'])
         
-        # 處理關鍵字
+        raw_news_list = []
         keywords_list = user_keywords.split(",")
         
-        # 1. 執行搜尋
-        raw_news = search_news(keywords_list, ddg_time_param)
+        # 1. 執行 RSS 搜尋
+        for kw in keywords_list:
+            kw = kw.strip()
+            if kw:
+                results = search_google_rss(kw, time_param, t['params'])
+                raw_news_list.extend(results)
         
-        if not raw_news:
-            st.warning("No news found for the given keywords.")
+        if not raw_news_list:
+            st.warning("No news found. / 找不到相關新聞 (RSS)")
         else:
-            # 2. 執行 AI 摘要
-            final_data = ai_summarize(raw_news, api_key, language_option)
+            # 2. AI 摘要
+            final_data = ai_summarize(raw_news_list, gemini_key, language_option)
             
-            # 3. 轉為 DataFrame
+            # 3. 顯示與下載
             df = pd.DataFrame(final_data)
             
-            # 整理欄位順序
+            # 調整欄位順序
             cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
-            df = df[cols]
+            # 確保欄位存在 (防止 AI 出錯時缺欄位)
+            df = df.reindex(columns=cols)
             
-            st.success(t['success'])
-            
-            # 4. 顯示結果
             st.dataframe(df, use_container_width=True)
             
-            # 5. Excel 下載
-            # 修正：使用 ExcelWriter 確保編碼正確
-            today_str = datetime.now().strftime("%Y%m%d")
-            file_name = f"Foxconn_News_{today_str}.xlsx"
-            
-            # 將 DF 轉為 Excel Bytes
-            import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Sheet1')
+                df.to_excel(writer, index=False)
                 
             st.download_button(
                 label=t['download_btn'],
                 data=buffer,
-                file_name=file_name,
+                file_name=f"Foxconn_News_RSS_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.ms-excel"
             )
