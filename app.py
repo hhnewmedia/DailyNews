@@ -172,4 +172,35 @@ if st.button(t['btn_start'], type="primary"):
         st.info("🔍 搜尋中...")
         
         raw_news_list = []
-        keywords
+        keywords_list = user_keywords.split(",")
+        
+        for kw in keywords_list:
+            kw = kw.strip()
+            if kw:
+                results = search_google_rss(kw, time_param, t['params'])
+                raw_news_list.extend(results)
+        
+        if not raw_news_list:
+            st.warning("⚠️ 找不到相關新聞")
+        else:
+            final_data = process_news(raw_news_list, gemini_key, t['prompt_lang'])
+            df = pd.DataFrame(final_data)
+            
+            # 欄位
+            cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
+            df = df.reindex(columns=cols)
+            
+            # 顯示
+            st.dataframe(df, use_container_width=True)
+            
+            # 下載
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False)
+                
+            st.download_button(
+                label=t['download_btn'],
+                data=buffer,
+                file_name=f"Foxconn_News_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.ms-excel"
+            )
