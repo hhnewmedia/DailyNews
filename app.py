@@ -6,8 +6,9 @@ import io
 import urllib.parse
 import requests
 import json
+import time
 
-# --- 1. 多國語言與參數設定 (完全體) ---
+# --- 1. 多國語言與參數設定 ---
 translations = {
     "繁體中文 (TW)": {
         "title": "鴻海全球輿情監控系統",
@@ -17,7 +18,7 @@ translations = {
         "keywords_label": "輸入搜尋關鍵字 (用逗號隔開)",
         "keywords_hint": "例如: 鴻海, Fii, 電動車",
         "btn_start": "開始搜尋與分析",
-        "processing": "正在讀取 Google News RSS 並進行 AI 摘要...",
+        "processing": "正在讀取 Google News RSS 並嘗試連接 AI 模型...",
         "success": "分析完成！",
         "download_btn": "下載 Excel 報表",
         "error_api": "請輸入 Gemini API Key 才能使用 AI 摘要！",
@@ -116,106 +117,3 @@ def search_google_rss(keyword, time_limit, params):
     encoded_query = urllib.parse.quote(query)
     
     # 使用選擇的語言參數 (hl, gl, ceid)
-    rss_url = f"{base_url}?q={encoded_query}&hl={params['hl']}&gl={params['gl']}&ceid={params['ceid']}"
-    
-    feed = feedparser.parse(rss_url)
-    results = []
-    for entry in feed.entries[:10]: # 取前10篇
-        pub_date = entry.published if 'published' in entry else datetime.now().strftime("%Y-%m-%d")
-        results.append({
-            "Keyword": keyword,
-            "Title": entry.title,
-            "Link": entry.link,
-            "Date": pub_date,
-            "Source": entry.source.title if 'source' in entry else "Google News"
-        })
-    return results
-
-# --- 3. 核心函數: AI 摘要 (REST API - 穩定版) ---
-def call_gemini_api(api_key, text):
-    """直接呼叫 Google API，避開套件版本問題"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    payload = {"contents": [{"parts": [{"text": text}]}]}
-    
-    try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            # 若 Flash 失敗，嘗試 Pro
-            url_pro = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
-            response_pro = requests.post(url_pro, headers=headers, data=json.dumps(payload))
-            if response_pro.status_code == 200:
-                return response_pro.json()['candidates'][0]['content']['parts'][0]['text']
-            else:
-                return f"Error: {response.status_code}"
-    except Exception as e:
-        return f"Error: {str(e)}"
-
-def ai_summarize(news_data, api_key, target_lang):
-    summarized_data = []
-    total = len(news_data)
-    if total == 0: return []
-    
-    progress_bar = st.progress(0)
-    
-    for index, item in enumerate(news_data):
-        # 動態提示詞：根據選擇的語言要求 AI 回覆
-        prompt = f"""
-        Role: Corporate PR Assistant.
-        Task: Summarize this news headline in 1 sentence.
-        Target Language: {target_lang}
-        
-        News Title: {item['Title']}
-        """
-        
-        summary = call_gemini_api(api_key, prompt)
-            
-        item['AI Summary'] = summary
-        summarized_data.append(item)
-        progress_bar.progress((index + 1) / total)
-        
-    return summarized_data
-
-# --- 4. 執行邏輯 ---
-if st.button(t['btn_start'], type="primary"):
-    if not gemini_key:
-        st.error(t['error_api'])
-    elif not user_keywords:
-        st.error(t['error_no_key'])
-    else:
-        st.info(t['processing'])
-        
-        raw_news_list = []
-        keywords_list = user_keywords.split(",")
-        
-        for kw in keywords_list:
-            kw = kw.strip()
-            if kw:
-                # 傳入語言參數
-                results = search_google_rss(kw, time_param, t['params'])
-                raw_news_list.extend(results)
-        
-        if not raw_news_list:
-            st.warning("No news found / 找不到相關新聞")
-        else:
-            # 傳入目標語言
-            final_data = ai_summarize(raw_news_list, gemini_key, t['prompt_lang'])
-            df = pd.DataFrame(final_data)
-            
-            cols = ["Date", "Keyword", "Title", "AI Summary", "Source", "Link"]
-            df = df.reindex(columns=cols)
-            
-            st.dataframe(df, use_container_width=True)
-            
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False)
-                
-            st.download_button(
-                label=t['download_btn'],
-                data=buffer,
-                file_name=f"Foxconn_News_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.ms-excel"
-            )
